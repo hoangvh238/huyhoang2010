@@ -823,6 +823,7 @@ ${o.feet ? `<g class="h-feet">
     $$('.rv', cardEl).forEach((el, i) => el.style.setProperty('--rv', (reduced() ? 0 : 0.12 + i * 0.13).toFixed(2) + 's'));
     cardEl.classList.remove('enter'); void cardEl.offsetWidth; cardEl.classList.add('enter');
     petalBurst();
+    setTimeout(() => { prepareCardPNG().catch(() => {}); }, 1600);
     setTimeout(() => Sound.play('bell', 1.12), 250);
   }
   function petalBurst() {
@@ -1002,35 +1003,72 @@ ${o.feet ? `<g class="h-feet">
   }
   const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const inApp = /FBAN|FBAV|Instagram|Zalo|Line\/|Messenger|TikTok|MicroMessenger/i.test(navigator.userAgent);
-  let saving = false, lastUrl = '';
+  const isAndroid = /Android/i.test(navigator.userAgent);
+  const FNAME = `thiep-20-10-${slug(NAME)}.png`;
+  // The PNG is rendered ahead of time so the tap on "Lưu thiệp" can open the
+  // share sheet synchronously (mobile browsers drop the gesture after an await).
+  let cardPng = null, cardPngP = null, saving = false;
+  function prepareCardPNG() {
+    if (cardPng) return Promise.resolve(cardPng);
+    if (!cardPngP) {
+      cardPngP = renderCardPNG()
+        .then(c => new Promise(res => {
+          const dataUrl = c.toDataURL('image/png');
+          try { c.toBlob(b => res({ blob: b, dataUrl }), 'image/png'); } catch (e) { res({ blob: null, dataUrl }); }
+        }))
+        .then(r => { cardPng = r; return r; })
+        .catch(e => { cardPngP = null; throw e; });
+    }
+    return cardPngP;
+  }
+  function deliverPNG(r) {
+    let file = null;
+    try { if (r.blob && typeof File === 'function') file = new File([r.blob], FNAME, { type: 'image/png' }); } catch (e) { file = null; }
+    const mobile = isIOS || isAndroid;
+    if (mobile && file && navigator.canShare && navigator.share) {
+      let ok = false;
+      try { ok = navigator.canShare({ files: [file] }); } catch (e) { ok = false; }
+      if (ok) {
+        navigator.share({ files: [file], title: 'Thiệp 20/10' })
+          .then(() => toast('Đã gửi thiệp đi ✿'))
+          .catch(err => { if (!err || err.name !== 'AbortError') openSaveModal(r.dataUrl); });
+        return;
+      }
+    }
+    if (!isIOS && !inApp && 'download' in document.createElement('a')) {
+      const a = document.createElement('a');
+      a.href = r.blob ? URL.createObjectURL(r.blob) : r.dataUrl;
+      a.download = FNAME; document.body.appendChild(a); a.click(); a.remove();
+      toast(isAndroid ? 'Đã lưu vào mục Tải xuống ✿' : 'Đã lưu thiệp vào máy ✿');
+      return;
+    }
+    openSaveModal(r.dataUrl);
+  }
   async function saveCard() {
+    if (cardPng) { deliverPNG(cardPng); return; }
     if (saving) return;
     saving = true;
     const btn = $('#saveBtn'), label = btn.textContent;
     btn.disabled = true; btn.textContent = 'Đang gói thiệp…';
     try {
-      const canvas = await renderCardPNG();
-      const blob = await new Promise(r => { try { canvas.toBlob(r, 'image/png'); } catch (e) { r(null); } });
-      if (lastUrl.startsWith('blob:')) URL.revokeObjectURL(lastUrl);
-      lastUrl = blob ? URL.createObjectURL(blob) : canvas.toDataURL('image/png');
-      const fname = `thiep-20-10-${slug(NAME)}.png`;
-      const canDownload = 'download' in document.createElement('a');
-      if (isIOS || inApp || !canDownload) openSaveModal(lastUrl, fname);
-      else {
-        const a = document.createElement('a');
-        a.href = lastUrl; a.download = fname; document.body.appendChild(a); a.click(); a.remove();
-        toast('Đã lưu thiệp vào máy ✿');
-      }
+      deliverPNG(await prepareCardPNG());
     } catch (e) {
       toast('Chưa lưu được, thử lại nhé');
     } finally {
       saving = false; btn.disabled = false; btn.textContent = label;
     }
   }
-  function openSaveModal(url, fname) {
+  function openSaveModal(dataUrl) {
     const m = $('#saveModal');
-    $('#saveImg').src = url;
-    const link = $('#saveLink'); link.href = url; link.setAttribute('download', fname);
+    $('#saveImg').src = dataUrl;          // data: URL so long-press "Save image" works
+    const link = $('#saveLink'); link.href = dataUrl; link.setAttribute('download', FNAME);
+    $('#inAppNote').hidden = !inApp;
+    const chrome = $('#openChrome');
+    chrome.hidden = !(inApp && isAndroid);
+    if (!chrome.hidden) {
+      const u = window.location;
+      chrome.href = `intent://${u.host}${u.pathname}${u.search}#Intent;scheme=https;package=com.android.chrome;end`;
+    }
     m.hidden = false;
     $('#closeModal').focus();
   }
@@ -1192,5 +1230,34 @@ ${o.feet ? `<g class="h-feet">
   sim.introX = sim.introBaseX;
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => layout());
   startLoop();
+  // ?og=1 / ?icon=1: static poster layouts used to render og-image.png and apple-touch-icon.png
+  (function posterMode() {
+    let q; try { q = new URLSearchParams(window.location.search); } catch (e) { return; }
+    if (!q.has('og') && !q.has('icon')) return;
+    stopLoop();
+    const garden = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(gardenSVGString(1040));
+    document.body.style.overflow = 'hidden';
+    if (q.has('icon')) {
+      document.body.innerHTML = `<div style="width:180px;height:180px;background:#FFF8EE;display:grid;place-items:center"><img src="favicon.svg" width="150" height="124"></div>`;
+      return;
+    }
+    const dots = 'radial-gradient(circle, rgba(201,190,245,.5) 2.4px, transparent 3px) 0 0 / 30px 30px';
+    document.body.innerHTML = `
+<div style="position:fixed;left:0;top:0;width:1200px;height:630px;overflow:hidden;background:${dots},#FFF8EE;font-family:${FF};color:#49352D">
+  <div style="position:absolute;left:36px;top:36px;width:1128px;height:558px;border:5px solid #49352D;border-radius:40px;background:#fff;box-shadow:12px 14px 0 #C9BEF5"></div>
+  <div style="position:absolute;left:46px;top:46px;width:1108px;height:538px;border:3px dashed #FFCFDA;border-radius:32px"></div>
+  <div style="position:absolute;left:86px;top:78px;width:500px">
+    <div style="display:inline-block;padding:8px 20px;border:3px solid #49352D;border-radius:999px;background:#BDE5D2;font-weight:800;font-size:22px;letter-spacing:.2em">BƯU ĐIỆN MÂY · 20/10</div>
+    <div style="margin-top:30px;font-size:58px;line-height:1.16;font-weight:800">Có một bưu kiện <span style="background:linear-gradient(transparent 58%,#FFE49B 58% 92%,transparent 92%)">dễ thương</span> đang chờ bạn mở</div>
+    <div style="margin-top:22px;font-size:27px;line-height:1.45;font-weight:500;color:#6E564C">Giúp mây shipper gom mochi, hoa và ngôi sao, rồi mở quà nhé.</div>
+    <div style="display:inline-block;margin-top:30px;padding:14px 34px;border:4px solid #49352D;border-radius:999px;background:#FFB7C5;font-weight:800;font-size:28px;box-shadow:0 7px 0 #49352D">Mở quà 💌</div>
+  </div>
+  <div style="position:absolute;right:76px;top:78px;width:520px;height:462px;border:5px solid #49352D;border-radius:30px;overflow:hidden;transform:rotate(2deg);box-shadow:10px 12px 0 #BDE5D2">
+    <img src="${garden}" style="width:100%;height:100%;display:block">
+  </div>
+  <div style="position:absolute;right:250px;top:58px;width:170px;height:44px;transform:rotate(-4deg);background:repeating-linear-gradient(45deg,rgba(255,183,197,.92) 0 14px,rgba(255,228,155,.92) 14px 28px)"></div>
+</div>`;
+  })();
+
   try { if (new URLSearchParams(window.location.search).has('debug')) window.__bdm = { sim, hero, G, renderCardPNG }; } catch (e) { /* ignore */ }
 })();
